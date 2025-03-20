@@ -1,0 +1,111 @@
+---
+- name: Azure CLI Login using Service Principal
+  azure.azcollection.azure_rm_accesstoken_info:
+    client_id: "{{ client_id }}"
+    secret: "{{ client_secret }}"
+    tenant: "{{ tenant_id }}"
+    subscription_id: "{{ subscription_id }}"
+    scopes:
+      - "https://management.azure.com/.default"
+  register: azure_token
+
+- name: Debug Azure Access Token
+  debug:
+    var: azure_token
+
+# 1. Create a Resource Group
+- name: Create a resource group
+  azure.azcollection.azure_rm_resourcegroup:
+    name: ansible-rg
+    location: eastus  # Change to your preferred Azure region
+    state: present
+
+# 2. Create a Virtual Network (VNet)
+- name: Create a virtual network
+  azure.azcollection.azure_rm_virtualnetwork:
+    resource_group: ansible-rg
+    name: ansible-vnet
+    address_prefixes: "10.0.0.0/16"
+    location: eastus
+    state: present
+
+# 3. Create a Subnet inside the VNet
+- name: Create a subnet
+  azure.azcollection.azure_rm_subnet:
+    resource_group: ansible-rg
+    name: ansible-subnet
+    virtual_network: ansible-vnet
+    address_prefix: "10.0.1.0/24"
+    state: present
+
+# 4. Create a Public IP Address (Optional, for external access)
+- name: Create a public IP
+  azure.azcollection.azure_rm_publicipaddress:
+    resource_group: ansible-rg
+    name: "{{ item.publicipname }}"
+    location: eastus
+    allocation_method: Static
+    state: present
+  loop:
+    - { publicipname: "ansible-public-ip-1" }
+    - { publicipname: "ansible-public-ip-2" }
+    - { publicipname: "ansible-public-ip-3" }
+# 5. Create a Network Security Group (NSG) and Allow SSH Access
+- name: Create a Network Security Group
+  azure.azcollection.azure_rm_securitygroup:
+    resource_group: ansible-rg
+    name: ansible-nsg
+    location: eastus
+    rules:
+      - name: AllowSSH
+        priority: 1001
+        direction: Inbound
+        access: Allow
+        protocol: Tcp
+        source_port_range: "*"
+        destination_port_range: "22"
+        source_address_prefix: "*"
+        destination_address_prefix: "*"
+
+# 6. Create a Network Interface (NIC) and Attach to Subnet
+- name: Create a network interface (NIC)
+  azure.azcollection.azure_rm_networkinterface:
+    resource_group: ansible-rg
+    name: "{{ item.nicname }}"
+    location: eastus
+    subnet_name: ansible-subnet
+    virtual_network_name: ansible-vnet
+    security_group: ansible-nsg
+    ip_configurations:
+      - name: default
+        public_ip_name: "{{ item.publicipname }}"
+        primary: true
+    state: present
+  loop:
+    - { publicipname: "ansible-public-ip-1", nicname: "ansible-nic-1" }
+    - { publicipname: "ansible-public-ip-2", nicname: "ansible-nic-2" }
+    - { publicipname: "ansible-public-ip-3", nicname: "ansible-nic-3" }
+
+ # 7. Create the Virtual Machine and Attach the NIC
+- name: Create an Azure VM
+  azure.azcollection.azure_rm_virtualmachine:
+    resource_group: ansible-rg
+    name: "{{ item.vmname }}"
+    vm_size: Standard_B1s
+    admin_username: azureuser
+    admin_password: "Password123!"
+    image:
+      offer: ubuntu-24_04-lts
+      publisher: Canonical
+      sku: server
+      version: latest
+    os_disk_caching: ReadWrite
+    managed_disk_type: Standard_LRS
+    network_interfaces: "{{ item.nicname }}"
+    state: present
+  loop:
+    - { vmname: "ansible-vm-1", nicname: "ansible-nic-1" }
+    - { vmname: "ansible-vm-2", nicname: "ansible-nic-2" }
+    - { vmname: "ansible-vm-3", nicname: "ansible-nic-3" }
+
+  
